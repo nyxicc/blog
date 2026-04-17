@@ -22,10 +22,7 @@ export default function Home() {
   return (
     <div className="w-full max-w-2xl">
       {/* ASCII header — desktop only */}
-      <pre
-        aria-hidden="true"
-        className="hidden md:block font-mono text-[0.6rem] leading-tight text-neutral-300 mb-6 select-none overflow-x-auto"
-      >
+      <pre className="hidden md:block font-mono text-[0.6rem] leading-tight text-neutral-300 mb-6 overflow-x-auto">
         {ASCII_HEADER}
       </pre>
 
@@ -46,19 +43,12 @@ export default function Home() {
         </a>
         <span className="text-neutral-700">•</span>
         <a
-          href="https://twitter.com/nyxicc"
+          href="https://linkedin.com/in/nyxicc"
           target="_blank"
           rel="noopener noreferrer"
           className="hover:text-white transition-colors"
         >
-          twitter
-        </a>
-        <span className="text-neutral-700">•</span>
-        <a
-          href="/rss.xml"
-          className="hover:text-white transition-colors"
-        >
-          rss
+          linkedin
         </a>
       </div>
 
