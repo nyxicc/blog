@@ -43,7 +43,7 @@ export default function Home() {
         </a>
         <span className="text-neutral-700">•</span>
         <a
-          href="https://linkedin.com/in/nyxicc"
+          href="https://linkedin.com/in/nd00"
           target="_blank"
           rel="noopener noreferrer"
           className="hover:text-white transition-colors"
