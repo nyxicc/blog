@@ -1,0 +1,106 @@
+export const frontmatter = {
+  title: "I didn't want to do my company's e-learning at home, so I automated it",
+  date: "2026-06-28",
+  slug: "automating-elearning",
+  author: "nyxicc",
+  excerpt: "This started purely out of spite.",
+  keywords: ["scorm", "automation", "playwright", "javascript", "elearning"],
+};
+
+This started purely out of spite.
+
+Every quarter my company drops a stack of mandatory e-learning on us: cybersecurity awareness, compliance, harassment prevention, the usual. Each one runs 45 minutes to an hour. They get assigned during our busiest periods, there's no blocked time on the calendar for them, and the unspoken expectation is you just... handle it. Evenings, lunch, whatever.
+
+I'm not doing that. That's my time. So I started looking for another way.
+
+---
+
+I opened the LMS (Cornerstone OnDemand) in Chrome, launched one of the courses, and hit F12. No plan, I just wanted to see what the page was actually doing. I switched to the Network tab and filtered to Fetch/XHR so I wasn't staring at a wall of font files and images. The course loaded and I started clicking through slides, watching the requests come in. Most of them were nothing: a heartbeat ping every 30 seconds or so, probably session keepalive. Then I finished the last slide and a POST request fired that hadn't shown up before.
+
+So it wasn't just a timer. Something on the page was actively reporting back. I clicked into the request payload and saw a field called `lesson_status` set to `passed`, along with a score. That was the first real signal. I copied the field name and searched it.
+
+The first result explained what I was looking at: SCORM.
+
+## Going down the rabbit hole
+
+SCORM stands for Sharable Content Object Reference Model. It's been the dominant standard for corporate e-learning since the early 2000s, and once I started reading about how it actually worked, the design was almost funny in retrospect.
+
+Before I got too deep into the spec, I described what I'd found to Claude: a POST request firing at course completion, a `lesson_status` field in the payload, and a JavaScript API object sitting on `window`. Claude's response reframed the whole thing. It noted that SCORM's client-side architecture is a well-documented security concern in the e-learning space, not a quirk of one particular LMS. The spec was written in 2001, before modern thinking around web security and trust boundaries, and it was designed under the assumption that only the course content itself would ever interact with the API. There's no technical mechanism that actually enforces that. Security researchers have described this as an inherent trust gap in the protocol: the LMS delegates all completion logic to client-side JavaScript and has no reliable way to verify the caller. That told me exactly what to look for. I wasn't chasing a bug in Cornerstone's implementation. I was looking at a structural flaw baked into the standard itself, and one that every SCORM-compliant LMS would share by design.
+
+The basic model: the LMS loads your course content (just HTML, JavaScript, and media) inside a browser window or iframe, and injects a JavaScript API object onto the page. The course content calls methods on that object to report back what the learner did. For SCORM 1.2, that object is literally called `API` and lives on `window`. For SCORM 2004, it's `API_1484_11`.
+
+I found the SCORM 1.2 spec and started reading through it. It's dense. The CMI data model has dozens of fields and the spec doesn't make it obvious which ones actually matter for a completion event versus which are optional metadata nobody reads. I spent some time in the docs, then started asking Claude to help me parse the relevant sections. Specifically, I wanted to know the difference between `cmi.core.lesson_status`, `cmi.core.exit`, and `cmi.core.session_time`, and whether an LMS would reject a completion if certain fields were missing or had unexpected values. Claude walked me through which fields were required for a valid completion sequence and which ones I could ignore.
+
+What I landed on was this: to mark a course complete, the sequence is basically four calls.
+
+```javascript
+API.LMSInitialize("")
+API.LMSSetValue("cmi.core.lesson_status", "passed")
+API.LMSSetValue("cmi.core.score.raw", "100")
+API.LMSFinish("")
+```
+
+That's it. When `LMSFinish` fires with `lesson_status` set to `passed`, the LMS records completion. No server-side verification. No confirmation that the course content was the caller. The LMS just sees the function call and writes the record.
+
+I went to the browser console, typed `window.API`, and hit enter. It returned an object.
+
+I ran the four lines. Refreshed the LMS. The course showed as complete.
+
+## The part that took more digging
+
+It didn't work that cleanly the first time, actually.
+
+Most LMSes load course content inside an iframe, sometimes nested inside multiple iframes. So `window.API` at the top level returns `undefined`. The API object exists, but it's scoped to the frame the course is running in, not the parent window. I spent a while on this, inspecting frame trees in DevTools and trying to figure out which `contentWindow` had the object.
+
+I eventually found documentation describing the SCORM API discovery algorithm: a standard traversal pattern where you walk up the frame hierarchy until you find a window with `API` defined. I had Claude help me write the function cleanly, since there are edge cases around circular references and max traversal depth:
+
+```javascript
+function findSCORMApi(win) {
+  let attempts = 0;
+  while (win.API == null && win.parent != null && win.parent != win) {
+    if (++attempts > 7) return null;
+    win = win.parent;
+  }
+  return win.API || null;
+}
+```
+
+For SCORM 2004 you run the same traversal but look for `API_1484_11`.
+
+Once I had the object reliably, I wrapped the whole thing into a Playwright script that authenticates to the LMS, navigates to a course, waits for the SCORM API to initialize, runs the completion sequence, and exits. Total runtime: a few seconds per course.
+
+## What this actually means
+
+This isn't a vulnerability in the traditional sense. No data is exposed, no systems are compromised, nothing is broken. It's an architectural assumption that turned out to be wrong: the assumption that course content would be the only thing calling the SCORM API.
+
+Since the API is just a JavaScript object scoped to a browser context, anything with access to that context can call it. There's no authentication on the API itself, no signature verification, nothing that would let the LMS distinguish "the course reported completion" from "something else reported completion." It just records the value.
+
+The practical consequence is that LMS completion data is unreliable in a pretty fundamental way. Those audit reports that compliance teams pull to show they trained their employees? They prove a JavaScript function was called. They don't prove anyone sat through anything or read anything or could answer a single question about the content. If I stumbled onto this by poking around in DevTools for an afternoon, other people have too.
+
+## Why it's this easy to begin with
+
+The more I sat with this, the less it seemed like a flaw in any specific platform and the more it seemed like the natural endpoint of how the whole market is set up.
+
+SCORM exists to produce a trackable completion event. That's the unit of value the LMS industry sells: completion rates, audit-ready reports, dashboards showing what percentage of employees finished the module. Courses are built to generate those events. Platforms are built to record them. Nobody in that chain is primarily optimizing for whether anyone learned anything, because the buyer isn't purchasing learning outcomes. They're purchasing a documented record that training happened.
+
+When you build a system optimized entirely around producing a completion event, you probably shouldn't be surprised when someone finds a way to produce the event without doing the course. The incentives pointed straight here.
+
+## Where I'm not fully comfortable
+
+Some of these courses aren't completely worthless. The cybersecurity one has content that's genuinely worth knowing. My argument is that a 45-minute click-through doesn't actually teach it to anyone (research on passive learning retention backs this up pretty consistently), but I'll admit that argument also conveniently lets me off the hook.
+
+Someone could push back: even if you retain nothing, sitting through it is some exposure. Automating it is zero. That's fair. My answer is that if retention actually mattered, the course would be built differently: spaced repetition, applied scenarios, follow-up quizzes spread out over weeks. It's not built that way. So the company has already made the call that retention isn't really the goal. I'm just taking that logic to its conclusion.
+
+What's harder to wave away is that some of this training exists to protect other people, not just to give the company legal cover. A harassment prevention course isn't purely box-checking. If someone skips it and then does something they shouldn't, the harm isn't abstract. I don't have a clean answer there. Most mandatory e-learning is too poorly designed to actually change behavior, so the automation probably isn't the real problem, but that's different from saying there's no problem at all.
+
+## What should actually change
+
+Move to xAPI (also called Tin Can). It sends learning statements to a server-side Learning Record Store instead of a client-side JavaScript object. There's nothing local to intercept. SCORM 1.2 is from 2001 and the only real reason organizations still run it is that the installed base is massive and migration is a pain.
+
+Beyond the protocol: validate assessments server-side with randomized question pools large enough that you can't just memorize answers from one run. Stop measuring completion rate as the primary metric. It tells you almost nothing about whether anyone knows the material, and as demonstrated here, it's trivially gameable.
+
+Or, and I know this is radical: give people time during work hours to do the training. Some of this is a policy problem, not a tech problem.
+
+---
+
+No systems were compromised in the making of this post. The only thing bypassed was a 47-minute video about phishing emails I've already seen three times.
