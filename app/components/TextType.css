@@ -1,0 +1,7 @@
+.text-type {
+  display: inline;
+}
+
+.text-type__cursor--hidden {
+  visibility: hidden;
+}

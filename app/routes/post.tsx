@@ -1,13 +1,18 @@
+import { useRef } from "react";
 import { useParams, Link } from "react-router";
 import { MDXProvider } from "@mdx-js/react";
 import { getPostBySlug } from "~/lib/posts";
 import type { MetaFunction } from "react-router";
+import TypewriterArticle from "~/components/typewriter_article";
+import HashTitle from "~/components/HashTitle";
+import TableOfContents from "~/components/TableOfContents";
 
 export const meta: MetaFunction = () => [{ title: "nyxicc • blog" }];
 
 export default function Post() {
   const { slug } = useParams();
   const post = slug ? getPostBySlug(slug) : null;
+  const articleRef = useRef<HTMLElement>(null);
 
   if (!post) {
     return (
@@ -32,29 +37,38 @@ export default function Post() {
   });
 
   return (
-    <div className="w-full max-w-2xl">
-      <Link
-        to="/"
-        className="font-mono text-sm text-neutral-500 hover:text-white transition-colors"
-      >
-        ← home
-      </Link>
+    <div className="w-full max-w-5xl flex gap-12">
+      {/* Sidebar TOC */}
+      <TableOfContents articleRef={articleRef} title={frontmatter.title} />
 
-      <div className="mt-8 mb-2 font-mono text-xs text-neutral-500">
-        {date}
-        <span className="mx-2">•</span>
-        {frontmatter.author}
+      {/* Main content */}
+      <div className="flex-1 min-w-0 max-w-2xl">
+        <Link
+          to="/"
+          className="font-mono text-sm text-neutral-500 hover:text-white transition-colors"
+        >
+          ← home
+        </Link>
+
+        <div className="mt-8 mb-2 font-mono text-xs text-neutral-500">
+          {date}
+          <span className="mx-2">•</span>
+          {frontmatter.author}
+        </div>
+
+        <h1 className="text-xl md:text-2xl font-bold text-white mb-8">
+          <HashTitle text={frontmatter.title} />
+        </h1>
+
+        <MDXProvider>
+          <TypewriterArticle
+            ref={articleRef}
+            className="prose prose-invert prose-neutral max-w-none prose-headings:font-mono prose-code:font-mono"
+          >
+            <Component />
+          </TypewriterArticle>
+        </MDXProvider>
       </div>
-
-      <h1 className="text-2xl font-bold text-white mb-8 md:text-gradient-animated">
-        {frontmatter.title}
-      </h1>
-
-      <MDXProvider>
-        <article className="prose prose-invert prose-neutral max-w-none prose-headings:font-mono prose-code:font-mono">
-          <Component />
-        </article>
-      </MDXProvider>
     </div>
   );
 }
